@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Sherpa Calendar Sync",
+  "version": "1.0.1",
+  "description": "Refresh your local Sherpa calendar from this Chrome profile.",
+  "permissions": ["alarms"],
+  "host_permissions": [
+    "https://sherpa-online.com/*",
+    "https://www.sherpa-online.com/*",
+    "https://app.sherpa-online.com/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {"service_worker": "worker.js"},
+  "action": {"default_title": "Refresh Sherpa Calendar"},
+  "content_scripts": [
+    {
+      "matches": [
+        "https://sherpa-online.com/*bookings*",
+        "https://www.sherpa-online.com/*bookings*",
+        "https://app.sherpa-online.com/*bookings*"
+      ],
+      "js": ["relay.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://sherpa-online.com/*bookings*",
+        "https://www.sherpa-online.com/*bookings*",
+        "https://app.sherpa-online.com/*bookings*"
+      ],
+      "js": ["capture.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}
