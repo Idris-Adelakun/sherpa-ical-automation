@@ -17,9 +17,12 @@ from .chrome_bridge import (
     queue_scan,
     receive_scan,
 )
+from .icloud import install_icloud, publish_icloud
 from .macos import install_agents
 from .storage import write_atomic
-from .sync import STATE, refresh
+from .sync import PENDING_PREFERENCE, STATE, refresh
+from .windows import install_windows
+from .windows_icloud import publish_windows_icloud
 
 FEED_PATH = "/sherpa.ics"
 
@@ -28,15 +31,29 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Export a Sherpa Online bookings snapshot.")
     commands = parser.add_subparsers(dest="command", required=True)
     export = commands.add_parser("export", help="Write an importable .ics file")
-    serve = commands.add_parser("serve", help="Serve a refreshing .ics feed on this Mac")
+    serve = commands.add_parser("serve", help="Serve a refreshing local .ics feed")
     connect = commands.add_parser("connect", help="Sign in and scan Your Bookings in Chrome")
     sync = commands.add_parser("sync", help="Scan Sherpa using the connected Chrome profile")
     chrome = commands.add_parser("prepare-chrome", help="Prepare the extension for your regular Chrome profile")
-    mac = commands.add_parser("install-mac", help="Install the local feed and twice-daily scan")
-    for command in (connect, sync, chrome, mac):
+    mac = commands.add_parser("install-mac", help="Install the local feed and hourly scan")
+    windows = commands.add_parser("install-windows", help="Install the feed and hourly scan in Windows Task Scheduler")
+    icloud = commands.add_parser("setup-icloud", help="Set up a private iCloud calendar")
+    icloud_sync = commands.add_parser("sync-icloud", help="Update the dedicated iCloud calendar now")
+    for command in (connect, sync, chrome, mac, windows, icloud, icloud_sync):
         command.add_argument("--state", type=Path, default=STATE, help="Private local state directory")
-    mac.add_argument("--seed", type=Path, help="Initial bookings JSON (uses PII.json if available)")
-    mac.add_argument("--port", type=int, default=8765, help="Local feed port (default: 8765)")
+    pending = sync.add_mutually_exclusive_group()
+    pending.add_argument(
+        "--include-pending", dest="include_pending", action="store_true",
+        help="Keep pending requests visible in the local subscription",
+    )
+    pending.add_argument(
+        "--exclude-pending", dest="include_pending", action="store_false",
+        help="Show only confirmed bookings in the local subscription",
+    )
+    sync.set_defaults(include_pending=None)
+    for command in (mac, windows):
+        command.add_argument("--seed", type=Path, help="Initial bookings JSON (uses PII.json if available)")
+        command.add_argument("--port", type=int, default=8765, help="Local feed port (default: 8765)")
     chrome.add_argument("--port", type=int, default=8765, help="Local feed port (default: 8765)")
     chrome.add_argument("--bookings-url", help="The signed-in Chrome profile's Sherpa bookings URL")
     for command in (export, serve):
@@ -70,15 +87,37 @@ def main() -> None:
     serve.add_argument("--chrome-state", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    if args.command in ("connect", "sync", "prepare-chrome", "install-mac"):
+    if hasattr(args, "state"):
         try:
             state = args.state.resolve()
-            if args.command in ("prepare-chrome", "install-mac") and not 1 <= args.port <= 65535:
+            if args.command == "sync" and args.include_pending is not None:
+                state.mkdir(mode=0o700, parents=True, exist_ok=True)
+                preference = state / PENDING_PREFERENCE
+                if args.include_pending:
+                    write_atomic(preference, b"")
+                    print("Pending requests will appear as tentative events in the local feed.")
+                else:
+                    preference.unlink(missing_ok=True)
+                    print("The local feed will show confirmed bookings only.")
+            if hasattr(args, "port") and not 1 <= args.port <= 65535:
                 raise ValueError("Port must be between 1 and 65535")
-            if args.command == "install-mac":
-                install_agents(state, args.seed, args.port)
+            if args.command in ("setup-icloud", "sync-icloud"):
+                if sys.platform == "win32":
+                    result = publish_windows_icloud(state, setup=args.command == "setup-icloud")
+                elif args.command == "setup-icloud":
+                    result = install_icloud(state)
+                else:
+                    result = publish_icloud(state)
+                if result:
+                    print(
+                        f"iCloud calendar: {result['added']} added, {result['updated']} updated, "
+                        f"{result['removed']} removed."
+                    )
+            elif args.command in ("install-mac", "install-windows"):
+                installer = install_agents if args.command == "install-mac" else install_windows
+                installer(state, args.seed, args.port)
                 print(f"Sherpa feed installed at http://127.0.0.1:{args.port}{FEED_PATH}")
-                print("Scheduled Sherpa scans for 08:00 and 20:00 in the Mac's time zone.")
+                print("Scheduled Sherpa scans at the top of every hour in your local time.")
             elif args.command == "prepare-chrome":
                 directory = prepare_extension(state, args.port, args.bookings_url)
                 print(f"Load this unpacked extension in the signed-in Chrome profile: {directory}")
@@ -99,9 +138,18 @@ def main() -> None:
     except (ValueError, ZoneInfoNotFoundError):
         parser.error(f"Unknown source time zone: {args.source_timezone}")
 
+    pending_preference = (
+        args.chrome_state / PENDING_PREFERENCE
+        if args.command == "serve" and args.chrome_state is not None
+        else None
+    )
+
     def load_calendar() -> tuple[bytes, int]:
+        include_pending = args.include_pending or (
+            pending_preference is not None and pending_preference.is_file()
+        )
         events, revision = read_snapshot(
-            args.source, zone, args.include_pending, args.include_student_names
+            args.source, zone, include_pending, args.include_student_names
         )
         return render_calendar(events, revision), len(events)
 

@@ -4,10 +4,11 @@ version = "0.1.0"
 description = "Export Sherpa Online tutoring bookings to an iCalendar file or local feed"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = ["tzdata; sys_platform == 'win32'"]
 
 [project.optional-dependencies]
 sync = ["playwright>=1.64,<2"]
+icloud-windows = ["caldav>=3.7,<4; sys_platform == 'win32'", "keyring>=25,<26; sys_platform == 'win32'"]
 
 [project.scripts]
 sherpa-ical-automation = "sherpa_ical_automation:main"

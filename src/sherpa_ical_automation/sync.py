@@ -5,13 +5,14 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from .calendar import parse_bookings, student_names, text_field
+from .calendar import parse_bookings, read_snapshot, student_names, text_field
 from .storage import write_json
 
 BOOKINGS_URL = "https://sherpa-online.com/tutor/bookings"
 SHERPA_HOSTS = {"sherpa-online.com", "www.sherpa-online.com", "app.sherpa-online.com"}
 ZONE = ZoneInfo("Europe/London")
 STATE = Path(".sherpa")
+PENDING_PREFERENCE = "include-pending"
 
 
 def sherpa_route(url: str) -> str:
@@ -96,9 +97,23 @@ def save_bookings(state: Path, records: list[dict]) -> int:
     cleaned = [calendar_fields(record) for record in records]
     events = parse_bookings(cleaned, ZONE, True, True)
     path = state / "bookings.json"
-    if not path.exists() or json.loads(path.read_text()) != cleaned:
+    try:
+        previous_events, _ = read_snapshot(path, ZONE, True, True)
+    except (FileNotFoundError, ValueError):
+        previous_events = None
+    if previous_events != events:
         write_json(path, cleaned)
     return sum(not event.tentative for event in events)
+
+
+def seed_snapshot(state: Path, seed: Path | None) -> Path:
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    snapshot = state / "bookings.json"
+    if not snapshot.exists():
+        source = seed or Path("PII.json")
+        payload = json.loads(source.read_bytes()) if seed is not None or source.is_file() else []
+        save_bookings(state, list(payload.values()) if isinstance(payload, dict) else payload)
+    return snapshot
 
 
 def response_collections(route: str, url: str, kind: str, body: str, source: dict | None):
@@ -172,7 +187,7 @@ def refresh(state: Path, connect: bool) -> int:
     source_file = state / "source.json"
     if not connect and not source_file.is_file():
         raise ValueError("Run connect and sign into Sherpa before the first scheduled scan.")
-    source = None if connect else json.loads(source_file.read_text())
+    source = None if connect else json.loads(source_file.read_bytes())
     try:
         with sync_playwright() as browser:
             profile = browser.chromium.launch_persistent_context(

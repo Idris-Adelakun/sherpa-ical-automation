@@ -17,7 +17,7 @@ def chrome_config(state: Path) -> Path:
 
 def prepare_extension(state: Path, port: int, bookings_url: str | None = None) -> Path:
     config = chrome_config(state)
-    previous = json.loads(config.read_text()) if config.is_file() else {}
+    previous = json.loads(config.read_bytes()) if config.is_file() else {}
     start_url = sherpa_route(bookings_url or previous.get("bookings_url", BOOKINGS_URL))
     if not is_bookings_page(start_url):
         raise ValueError("Enter the HTTPS URL of your Sherpa bookings page")
@@ -43,7 +43,7 @@ def authorized(state: Path, header: str) -> bool:
     config = chrome_config(state)
     if not config.is_file() or not header.isascii():
         return False
-    token = json.loads(config.read_text())["token"]
+    token = json.loads(config.read_bytes())["token"]
     return compare_digest(header, f"Bearer {token}")
 
 
@@ -51,9 +51,9 @@ def pending_scan(state: Path) -> str | None:
     request = state / "chrome-request.json"
     if not request.is_file():
         return None
-    request_id = json.loads(request.read_text())["id"]
+    request_id = json.loads(request.read_bytes())["id"]
     result = state / "chrome-result.json"
-    if result.is_file() and json.loads(result.read_text())["id"] == request_id:
+    if result.is_file() and json.loads(result.read_bytes())["id"] == request_id:
         return None
     return request_id
 
@@ -89,7 +89,7 @@ def receive_scan(state: Path, report: object) -> int:
         if not isinstance(responses, list):
             raise ValueError("Invalid Chrome scan responses")
         source_path = state / "chrome-source.json"
-        source = json.loads(source_path.read_text()) if source_path.is_file() else None
+        source = json.loads(source_path.read_bytes()) if source_path.is_file() else None
         if source and source["page"] != page:
             source = None
         candidates = []
@@ -107,7 +107,7 @@ def receive_scan(state: Path, report: object) -> int:
         result["count"] = save_bookings(state, records)
         write_json(source_path, selected)
         config = chrome_config(state)
-        settings = json.loads(config.read_text())
+        settings = json.loads(config.read_bytes())
         if settings.get("bookings_url") != page:
             settings["bookings_url"] = page
             write_json(config, settings)
