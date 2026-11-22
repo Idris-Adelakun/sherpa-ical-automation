@@ -7,12 +7,24 @@ import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib.request import urlopen
+from uuid import uuid4
+
+from keyring.backends.Windows import WinVaultKeyring
 
 from sherpa_ical_automation.storage import write_json
 from sherpa_ical_automation.windows import run_system
 
 
 def main() -> None:
+    vault = WinVaultKeyring()
+    service = f"Sherpa test {uuid4()}"
+    vault.set_password(service, "test-account", "test-only")
+    try:
+        credential = vault.get_credential(service, None)
+        assert credential.username == "test-account" and credential.password == "test-only"
+    finally:
+        vault.delete_password(service, "test-account")
+
     system = Path(os.environ["SystemRoot"]) / "System32"
     scheduler = system / "schtasks.exe"
     identity = run_system(system / "whoami.exe", "/user", "/fo", "csv", "/nh").stdout.strip()
@@ -63,6 +75,17 @@ def main() -> None:
             for name in reversed(tasks):
                 run_system(scheduler, "/End", "/TN", name, check=False)
                 run_system(scheduler, "/Delete", "/TN", name, "/F", check=False)
+            # End stops the task asynchronously. Wait for its redirected logs to close.
+            deadline = time.monotonic() + 10
+            for path in state.glob("*.log"):
+                while True:
+                    try:
+                        path.unlink(missing_ok=True)
+                        break
+                    except PermissionError:
+                        if time.monotonic() >= deadline:
+                            raise
+                        time.sleep(0.2)
 
 
 if __name__ == "__main__":

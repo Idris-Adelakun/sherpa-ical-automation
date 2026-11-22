@@ -19,6 +19,6 @@ jobs:
       - name: Install in a Windows virtual environment
         run: |
           python -m venv .venv
-          .\.venv\Scripts\python.exe -m pip install .
+          .\.venv\Scripts\python.exe -m pip install ".[icloud-windows]"
       - name: Exercise Windows Task Scheduler and the calendar feed
         run: .\.venv\Scripts\python.exe tests/windows_smoke.py
